@@ -543,6 +543,102 @@ class RandomCircuit(BaseQuantumCircuit):
         return self._kernel
 
 
+class GroverSearchCircuit(BaseQuantumCircuit):
+    """Grover's Search Algorithm circuit with Phase Oracle and Diffuser."""
+
+    def __init__(self, num_qubits: int, target_state: Optional[str] = None):
+        super().__init__(num_qubits, 'grover', target_state=target_state)
+        self.target_state = target_state or ('1' * num_qubits)
+
+    @property
+    def size(self) -> int:
+        return self.num_qubits * 4 + 6
+
+    @property
+    def depth(self) -> int:
+        return 6
+
+    @property
+    def gate_counts(self) -> Dict[str, int]:
+        return {'h': self.num_qubits * 2, 'x': self.num_qubits, 'mcx': 2}
+
+    def get_qiskit_circuit(self) -> Optional[QuantumCircuit]:
+        if not QISKIT_AVAILABLE:
+            return None
+        if self._circuit is None:
+            qc = QuantumCircuit(self.num_qubits)
+            for i in range(self.num_qubits):
+                qc.h(i)
+            # Oracle
+            for i, bit in enumerate(self.target_state):
+                if bit == '0':
+                    qc.x(i)
+            if self.num_qubits > 1:
+                qc.h(self.num_qubits - 1)
+                qc.mcx(list(range(self.num_qubits - 1)), self.num_qubits - 1)
+                qc.h(self.num_qubits - 1)
+            for i, bit in enumerate(self.target_state):
+                if bit == '0':
+                    qc.x(i)
+            # Diffuser
+            for i in range(self.num_qubits):
+                qc.h(i)
+                qc.x(i)
+            if self.num_qubits > 1:
+                qc.h(self.num_qubits - 1)
+                qc.mcx(list(range(self.num_qubits - 1)), self.num_qubits - 1)
+                qc.h(self.num_qubits - 1)
+            for i in range(self.num_qubits):
+                qc.x(i)
+                qc.h(i)
+            from qiskit.compiler import transpile
+            self._circuit = transpile(qc, basis_gates=['h', 'x', 'cx', 'rz', 'cp'])
+        return self._circuit
+
+    def get_cudaq_kernel(self):
+        return None
+
+
+class BernsteinVaziraniCircuit(BaseQuantumCircuit):
+    """Bernstein-Vazirani Algorithm circuit for secret bitstring estimation."""
+
+    def __init__(self, num_qubits: int, secret_string: Optional[str] = None):
+        super().__init__(num_qubits, 'bv', secret_string=secret_string)
+        self.secret_string = secret_string or ('1' * (num_qubits - 1))
+
+    @property
+    def size(self) -> int:
+        return self.num_qubits * 2 + len(self.secret_string)
+
+    @property
+    def depth(self) -> int:
+        return 3
+
+    @property
+    def gate_counts(self) -> Dict[str, int]:
+        return {'h': self.num_qubits * 2, 'cx': self.secret_string.count('1')}
+
+    def get_qiskit_circuit(self) -> Optional[QuantumCircuit]:
+        if not QISKIT_AVAILABLE:
+            return None
+        if self._circuit is None:
+            n = self.num_qubits
+            qc = QuantumCircuit(n)
+            qc.x(n - 1)
+            for i in range(n):
+                qc.h(i)
+            for i, bit in enumerate(self.secret_string[:n-1]):
+                if bit == '1':
+                    qc.cx(i, n - 1)
+            for i in range(n):
+                qc.h(i)
+            self._circuit = qc
+        return self._circuit
+
+    def get_cudaq_kernel(self):
+        return None
+
+
 # =====================================
 # CIRCUIT FACTORY
 # =====================================
@@ -556,7 +652,7 @@ class QuantumCircuitFactory:
         Create a quantum circuit of the specified type.
         
         Args:
-            circuit_type: Type of circuit ('qft', 'ghz', 'vqe', 'qaoa', 'random')
+            circuit_type: Type of circuit ('qft', 'ghz', 'vqe', 'qaoa', 'random', 'grover', 'bv')
             num_qubits: Number of qubits
             **kwargs: Additional parameters for specific circuits
         
@@ -575,9 +671,13 @@ class QuantumCircuitFactory:
             return QAOACircuit(num_qubits, **kwargs)
         elif circuit_type == 'random':
             return RandomCircuit(num_qubits, **kwargs)
+        elif circuit_type == 'grover':
+            return GroverSearchCircuit(num_qubits, **kwargs)
+        elif circuit_type == 'bv':
+            return BernsteinVaziraniCircuit(num_qubits, **kwargs)
         else:
             raise ValueError(f"Unknown circuit type: {circuit_type}. "
-                           f"Available: qft, ghz, vqe, qaoa, random")
+                           f"Available: qft, ghz, vqe, qaoa, random, grover, bv")
 
 
 # =====================================
@@ -657,7 +757,9 @@ AVAILABLE_CIRCUITS = {
     'ghz': GHZCircuit,
     'vqe': VQECircuit,
     'qaoa': QAOACircuit,
-    'random': RandomCircuit
+    'random': RandomCircuit,
+    'grover': GroverSearchCircuit,
+    'bv': BernsteinVaziraniCircuit
 }
 
 
